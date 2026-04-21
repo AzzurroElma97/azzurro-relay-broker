@@ -28,24 +28,13 @@ io.on('connection', (socket) => {
       // È IL TELEFONO ANDROID!
       serverSocketId = socket.id;
       console.log('📱 Server Android Master CONNESSO:', socket.id);
-      
+
       // Avvisa tutti i siti web/client che il sistema è operativo (se non in manutenzione)
       io.emit('server_status', { online: !isMaintenanceActive });
-      
-      // Invia immediatamente il conteggio reale delle connessioni al Master
-      const clientCount = io.engine.clientsCount;
-      io.to(serverSocketId).emit('update_metrics', { connections: clientCount });
-
       if (callback) callback({ success: true, message: 'Autenticato come Android Master' });
     } else {
       // È un normale cliente web
       console.log('👤 Web Client connesso:', socket.id);
-      
-      // Aggiorna il Master sul nuovo conteggio
-      if (serverSocketId) {
-        io.to(serverSocketId).emit('update_metrics', { connections: io.engine.clientsCount });
-      }
-
       // Comunica subito lo stato al cliente
       if (callback) callback({ success: true, isServerOnline: (serverSocketId !== null && !isMaintenanceActive) });
     }
@@ -53,18 +42,18 @@ io.on('connection', (socket) => {
 
   // Comando speciale dall'Admin
   socket.on('admin_toggle_maintenance', (data) => {
-      isMaintenanceActive = data.active;
-      console.log(`📡 STATO MANUTENZIONE CAMBIATO: ${isMaintenanceActive}`);
-      io.emit('server_status', { online: (serverSocketId !== null && !isMaintenanceActive) });
+    isMaintenanceActive = data.active;
+    console.log(`📡 STATO MANUTENZIONE CAMBIATO: ${isMaintenanceActive}`);
+    io.emit('server_status', { online: (serverSocketId !== null && !isMaintenanceActive) });
   });
 
   // 2. Il Web Client fa una richiesta (es: cerca preventivo)
   socket.on('client_request', (data, callback) => {
     if (!serverSocketId) {
       // Se il telefono è spento, blocca tutto con manutenzione
-      return callback({ 
-        error: 'MAINTENANCE_MODE', 
-        message: 'Il server centrale è attualmente scollegato (Manutenzione).' 
+      return callback({
+        error: 'MAINTENANCE_MODE',
+        message: 'Il server centrale è attualmente scollegato (Manutenzione).'
       });
     }
 
@@ -77,21 +66,15 @@ io.on('connection', (socket) => {
 
   // 3. Il Master Server (Android) invia Notifiche Push a tutti o a uno specifico Web Client
   socket.on('broadcast_to_web', (data) => {
-      if (socket.id === serverSocketId) {
-          console.log(`📡 Broadcast dal Master [${data.topic}]:`, data.payload);
-          io.emit(data.topic, data.payload);
-      }
+    if (socket.id === serverSocketId) {
+      console.log(`📡 Broadcast dal Master [${data.topic}]:`, data.payload);
+      io.emit(data.topic, data.payload);
+    }
   });
 
   // 4. Disconnessione
   socket.on('disconnect', () => {
     console.log('❌ Disconnesso:', socket.id);
-    
-    // Aggiorna il Master sul nuovo conteggio (meno quello che si è disconnesso)
-    if (serverSocketId && socket.id !== serverSocketId) {
-        io.to(serverSocketId).emit('update_metrics', { connections: io.engine.clientsCount });
-    }
-
     if (socket.id === serverSocketId) {
       console.log('🚨 Server Android Master DISCONNESSO! Tutto in Manutenzione.');
       serverSocketId = null;

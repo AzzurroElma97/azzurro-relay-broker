@@ -31,10 +31,21 @@ io.on('connection', (socket) => {
       
       // Avvisa tutti i siti web/client che il sistema è operativo (se non in manutenzione)
       io.emit('server_status', { online: !isMaintenanceActive });
+      
+      // Invia immediatamente il conteggio reale delle connessioni al Master
+      const clientCount = io.engine.clientsCount;
+      io.to(serverSocketId).emit('update_metrics', { connections: clientCount });
+
       if (callback) callback({ success: true, message: 'Autenticato come Android Master' });
     } else {
       // È un normale cliente web
       console.log('👤 Web Client connesso:', socket.id);
+      
+      // Aggiorna il Master sul nuovo conteggio
+      if (serverSocketId) {
+        io.to(serverSocketId).emit('update_metrics', { connections: io.engine.clientsCount });
+      }
+
       // Comunica subito lo stato al cliente
       if (callback) callback({ success: true, isServerOnline: (serverSocketId !== null && !isMaintenanceActive) });
     }
@@ -75,6 +86,12 @@ io.on('connection', (socket) => {
   // 4. Disconnessione
   socket.on('disconnect', () => {
     console.log('❌ Disconnesso:', socket.id);
+    
+    // Aggiorna il Master sul nuovo conteggio (meno quello che si è disconnesso)
+    if (serverSocketId && socket.id !== serverSocketId) {
+        io.to(serverSocketId).emit('update_metrics', { connections: io.engine.clientsCount });
+    }
+
     if (socket.id === serverSocketId) {
       console.log('🚨 Server Android Master DISCONNESSO! Tutto in Manutenzione.');
       serverSocketId = null;

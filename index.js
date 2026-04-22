@@ -7,75 +7,83 @@ const app = express();
 app.use(cors());
 const server = http.createServer(app);
 
-// Configurazione Socket.io ottimizzata per stabilità estrema e recupero sessione
+// Configurazione Socket.io Ultra-Stabile
 const io = new Server(server, {
-  cors: {
-    origin: "*", 
-    methods: ["GET", "POST"]
-  },
+  cors: { origin: "*", methods: ["GET", "POST"] },
   connectionStateRecovery: {
-    // max 2 minuti di buffer per messaggi persi durante sbalzi di segnale
     maxDisconnectionDuration: 2 * 60 * 1000,
-    // mantiene lo stato dei socket
     skipMiddlewares: true,
   },
   pingInterval: 5000, 
-  pingTimeout: 10000,  
+  pingTimeout: 10000,
   allowEIO3: true
 });
 
 let serverSocketId = null;
+let masterSocket = null;
 let lastMasterHeartbeat = Date.now();
 let isMaintenanceActive = false; 
 const ADMIN_SECRET = process.env.ADMIN_SECRET || 'Azzurro97_Master';
 
-// Monitoraggio costante del Master
+// Monitoraggio costante del Master (Watchdog)
 setInterval(() => {
-  if (serverSocketId && (Date.now() - lastMasterHeartbeat > 25000)) {
-    console.log('⚠️ Master non risponde da 25s, forzo offline.');
+  const now = Date.now();
+  const diff = now - lastMasterHeartbeat;
+  if (serverSocketId && diff > 30000) {
+    console.log(`⚠️ Master inattivo da ${diff}ms. Forzo reset stato.`);
     serverSocketId = null;
+    masterSocket = null;
     io.emit('server_status', { online: false });
   }
 }, 10000);
 
 io.on('connection', (socket) => {
-  console.log('⚡ Connessione:', socket.id);
+  console.log(`⚡ Nuova connessione [${socket.id}]`);
 
   socket.on('identify', (data, callback) => {
     if (data && data.secret === ADMIN_SECRET) {
       serverSocketId = socket.id;
+      masterSocket = socket;
       lastMasterHeartbeat = Date.now();
-      console.log('📱 Master Android CONNESSO:', socket.id);
+      console.log(`📱 MASTER IDENTIFICATO: ${socket.id}`);
       io.emit('server_status', { online: !isMaintenanceActive });
-      if (callback) callback({ success: true, message: 'Autenticato' });
+      if (callback) callback({ success: true, message: 'Autenticato come Master' });
     } else {
-      if (callback) callback({ success: true, isServerOnline: (serverSocketId !== null && !isMaintenanceActive) });
+      // Normale client web o driver
+      console.log(`👤 Client identificato. Master attuale: ${serverSocketId ? '🟢' : '🔴'}`);
+      if (callback) callback({ 
+        success: true, 
+        isServerOnline: (serverSocketId !== null && !isMaintenanceActive),
+        debugInfo: { masterConnected: !!serverSocketId, maintenance: isMaintenanceActive }
+      });
     }
   });
 
-  // Ricezione battito cardiaco dal Master
   socket.on('master_heartbeat', () => {
-    if (socket.id === serverSocketId) {
+    // Se il socket che manda l'heartbeat è il master, aggiorna il timestamp
+    if (socket.id === serverSocketId || socket === masterSocket) {
       lastMasterHeartbeat = Date.now();
+      // console.log('💓 Heartbeat ricevuto dal Master');
     }
   });
 
-  // SPEGNIMENTO MANUALE: Il Master avvisa che sta chiudendo apposta
   socket.on('master_shutdown', () => {
-    if (socket.id === serverSocketId) {
-      console.log('🛑 Master spento manualmente dall\'utente.');
+    if (socket.id === serverSocketId || socket === masterSocket) {
+      console.log('🛑 Master ha richiesto lo spegnimento manuale.');
       serverSocketId = null;
+      masterSocket = null;
       io.emit('server_status', { online: false });
     }
   });
 
   socket.on('client_request', (data, callback) => {
     if (!serverSocketId) {
+      console.log('❌ Richiesta client fallita: Master non connesso.');
       return callback({ error: 'OFFLINE', message: 'Il server Master è scollegato.' });
     }
     
-    // Timeout di sicurezza per le richieste al Master
     const timeout = setTimeout(() => {
+      console.log(`⏰ Timeout richiesta client per azione: ${data.action}`);
       callback({ success: false, error: 'TIMEOUT', message: 'Il telefono non ha risposto in tempo.' });
     }, 15000);
 
@@ -86,38 +94,46 @@ io.on('connection', (socket) => {
   });
 
   socket.on('broadcast_to_web', (data) => {
-    if (socket.id === serverSocketId) {
+    if (socket.id === serverSocketId || socket === masterSocket) {
       io.emit(data.topic, data.payload);
     }
   });
 
   socket.on('disconnect', (reason) => {
-    if (socket.id === serverSocketId) {
-      console.log(`🚨 Master Disconnesso accidentalmente (${reason}). Mantengo ONLINE per 60s...`);
-      // Manteniamo ONLINE per 1 minuto intero per dare tempo al telefono di rientrare (es: galleria o cambio cella)
-      const currentId = socket.id;
+    if (socket.id === serverSocketId || socket === masterSocket) {
+      console.log(`🚨 MASTER DISCONNESSO (${reason}). Mantengo ONLINE per 60s per recupero...`);
+      const disconnectedId = socket.id;
+      
       setTimeout(() => {
-        if (serverSocketId === currentId) {
-           console.log('💀 Master non rientrato dopo 60s. Dichiaro OFFLINE.');
+        // Se dopo 60s il master non si è ricollegato (quindi serverSocketId è ancora quello vecchio o nullo)
+        if (serverSocketId === disconnectedId) {
+           console.log('💀 Master non recuperato. Dichiaro OFFLINE.');
            serverSocketId = null;
+           masterSocket = null;
            io.emit('server_status', { online: false });
         }
-      }, 60000); 
+      }, 60000);
     }
   });
 });
 
-app.get('/ping', (req, res) => {
-  res.json({ 
-    status: 'ok', 
-    master: serverSocketId ? 'online' : 'offline',
-    maintenance: isMaintenanceActive,
-    uptime: process.uptime()
+// Endpoint di Diagnostica per l'utente
+app.get('/debug', (req, res) => {
+  res.json({
+    master_online: !!serverSocketId,
+    master_socket_id: serverSocketId,
+    last_heartbeat: new Date(lastMasterHeartbeat).toLocaleTimeString(),
+    seconds_since_heartbeat: Math.floor((Date.now() - lastMasterHeartbeat) / 1000),
+    maintenance_mode: isMaintenanceActive,
+    relay_uptime: Math.floor(process.uptime()) + 's',
+    env_secret_set: ADMIN_SECRET !== 'Azzurro97_Master' ? 'CUSTOM' : 'DEFAULT'
   });
 });
 
+app.get('/ping', (req, res) => { res.json({ status: 'ok' }); });
+
 app.get('/', (req, res) => {
-  res.send(`Azzurro Relay attivo. Master: ${serverSocketId ? '🟢' : '🔴'}`);
+  res.send(`<h1>Azzurro Titanium Relay</h1><p>Master: ${serverSocketId ? '🟢 ONLINE' : '🔴 OFFLINE'}</p><p>Usa <a href="/debug">/debug</a> per info tecniche.</p>`);
 });
 
 const PORT = process.env.PORT || 3000;

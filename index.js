@@ -7,88 +7,120 @@ const app = express();
 app.use(cors());
 const server = http.createServer(app);
 
+// Configurazione Socket.io ottimizzata per stabilità estrema e recupero sessione
 const io = new Server(server, {
   cors: {
-    origin: "*", // allow web app from anywhere (Vercel)
+    origin: "*", 
     methods: ["GET", "POST"]
-  }
+  },
+  connectionStateRecovery: {
+    // max 2 minuti di buffer per messaggi persi durante sbalzi di segnale
+    maxDisconnectionDuration: 2 * 60 * 1000,
+    // mantiene lo stato dei socket
+    skipMiddlewares: true,
+  },
+  pingInterval: 5000, 
+  pingTimeout: 10000,  
+  allowEIO3: true
 });
 
-// The socket ID of the single Android Master Phone
 let serverSocketId = null;
-let isMaintenanceActive = false; // Flag globale per il Kill Switch
+let lastMasterHeartbeat = Date.now();
+let isMaintenanceActive = false; 
 const ADMIN_SECRET = process.env.ADMIN_SECRET || 'Azzurro97_Master';
 
-io.on('connection', (socket) => {
-  console.log('⚡ Nuova connessione rilevata:', socket.id);
+// Monitoraggio costante del Master
+setInterval(() => {
+  if (serverSocketId && (Date.now() - lastMasterHeartbeat > 25000)) {
+    console.log('⚠️ Master non risponde da 25s, forzo offline.');
+    serverSocketId = null;
+    io.emit('server_status', { online: false });
+  }
+}, 10000);
 
-  // 1. Identificazione
+io.on('connection', (socket) => {
+  console.log('⚡ Connessione:', socket.id);
+
   socket.on('identify', (data, callback) => {
     if (data && data.secret === ADMIN_SECRET) {
-      // È IL TELEFONO ANDROID!
       serverSocketId = socket.id;
-      console.log('📱 Server Android Master CONNESSO:', socket.id);
-
-      // Avvisa tutti i siti web/client che il sistema è operativo (se non in manutenzione)
+      lastMasterHeartbeat = Date.now();
+      console.log('📱 Master Android CONNESSO:', socket.id);
       io.emit('server_status', { online: !isMaintenanceActive });
-      if (callback) callback({ success: true, message: 'Autenticato come Android Master' });
+      if (callback) callback({ success: true, message: 'Autenticato' });
     } else {
-      // È un normale cliente web
-      console.log('👤 Web Client connesso:', socket.id);
-      // Comunica subito lo stato al cliente
       if (callback) callback({ success: true, isServerOnline: (serverSocketId !== null && !isMaintenanceActive) });
     }
   });
 
-  // Comando speciale dall'Admin
-  socket.on('admin_toggle_maintenance', (data) => {
-    isMaintenanceActive = data.active;
-    console.log(`📡 STATO MANUTENZIONE CAMBIATO: ${isMaintenanceActive}`);
-    io.emit('server_status', { online: (serverSocketId !== null && !isMaintenanceActive) });
+  // Ricezione battito cardiaco dal Master
+  socket.on('master_heartbeat', () => {
+    if (socket.id === serverSocketId) {
+      lastMasterHeartbeat = Date.now();
+    }
   });
 
-  // 2. Il Web Client fa una richiesta (es: cerca preventivo)
+  // SPEGNIMENTO MANUALE: Il Master avvisa che sta chiudendo apposta
+  socket.on('master_shutdown', () => {
+    if (socket.id === serverSocketId) {
+      console.log('🛑 Master spento manualmente dall\'utente.');
+      serverSocketId = null;
+      io.emit('server_status', { online: false });
+    }
+  });
+
   socket.on('client_request', (data, callback) => {
     if (!serverSocketId) {
-      // Se il telefono è spento, blocca tutto con manutenzione
-      return callback({
-        error: 'MAINTENANCE_MODE',
-        message: 'Il server centrale è attualmente scollegato (Manutenzione).'
-      });
+      return callback({ error: 'OFFLINE', message: 'Il server Master è scollegato.' });
     }
+    
+    // Timeout di sicurezza per le richieste al Master
+    const timeout = setTimeout(() => {
+      callback({ success: false, error: 'TIMEOUT', message: 'Il telefono non ha risposto in tempo.' });
+    }, 15000);
 
-    // Inoltra la richiesta dal Web al Telefono e aspetta la risposta
     io.to(serverSocketId).emit('process_request', data, (response) => {
-      // Una volta che il telefono calcola, rimandiamo la risposta al Web
+      clearTimeout(timeout);
       callback(response);
     });
   });
 
-  // 3. Il Master Server (Android) invia Notifiche Push a tutti o a uno specifico Web Client
   socket.on('broadcast_to_web', (data) => {
     if (socket.id === serverSocketId) {
-      console.log(`📡 Broadcast dal Master [${data.topic}]:`, data.payload);
       io.emit(data.topic, data.payload);
     }
   });
 
-  // 4. Disconnessione
-  socket.on('disconnect', () => {
-    console.log('❌ Disconnesso:', socket.id);
+  socket.on('disconnect', (reason) => {
     if (socket.id === serverSocketId) {
-      console.log('🚨 Server Android Master DISCONNESSO! Tutto in Manutenzione.');
-      serverSocketId = null;
-      // Avvisa tutti i web client di bloccare i bottoni
-      io.emit('server_status', { online: false });
+      console.log(`🚨 Master Disconnesso accidentalmente (${reason}). Mantengo ONLINE per 60s...`);
+      // Manteniamo ONLINE per 1 minuto intero per dare tempo al telefono di rientrare (es: galleria o cambio cella)
+      const currentId = socket.id;
+      setTimeout(() => {
+        if (serverSocketId === currentId) {
+           console.log('💀 Master non rientrato dopo 60s. Dichiaro OFFLINE.');
+           serverSocketId = null;
+           io.emit('server_status', { online: false });
+        }
+      }, 60000); 
     }
   });
 });
 
+app.get('/ping', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    master: serverSocketId ? 'online' : 'offline',
+    maintenance: isMaintenanceActive,
+    uptime: process.uptime()
+  });
+});
+
 app.get('/', (req, res) => {
-  res.send(`Ponte Relay in funzione. Stato Server Principale: ${serverSocketId ? '🟢 ONLINE' : '🔴 OFFLINE (Manutenzione)'}`);
+  res.send(`Azzurro Relay attivo. Master: ${serverSocketId ? '🟢' : '🔴'}`);
 });
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-  console.log(`Relay Broker in esecuzione sulla porta ${PORT}`);
+  console.log(`Relay Broker Titanium pronto sulla porta ${PORT}`);
 });

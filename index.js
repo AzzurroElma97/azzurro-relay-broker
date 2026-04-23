@@ -77,15 +77,20 @@ io.on('connection', (socket) => {
   });
 
   socket.on('client_request', (data, callback) => {
-    if (!serverSocketId) {
-      console.log('❌ Richiesta client fallita: Master non connesso.');
-      return callback({ error: 'OFFLINE', message: 'Il server Master è scollegato.' });
+    // Se è un PING di controllo, rispondiamo OK se il Master è nel periodo di grazia (serverSocketId presente)
+    if (data.action === 'PING' && serverSocketId) {
+      return callback({ success: true, status: 'GRACE_PERIOD', timestamp: Date.now() });
+    }
+
+    if (!serverSocketId || (masterSocket && !masterSocket.connected)) {
+      console.log('❌ Richiesta client fallita: Master non raggiungibile.');
+      return callback({ error: 'OFFLINE', message: 'Il server Master è in fase di riconnessione.' });
     }
     
     const timeout = setTimeout(() => {
       console.log(`⏰ Timeout richiesta client per azione: ${data.action}`);
-      callback({ success: false, error: 'TIMEOUT', message: 'Il telefono non ha risposto in tempo.' });
-    }, 15000);
+      callback({ success: false, error: 'TIMEOUT', message: 'Il telefono non ha risposto entro 60 secondi.' });
+    }, 60000);
 
     io.to(serverSocketId).emit('process_request', data, (response) => {
       clearTimeout(timeout);

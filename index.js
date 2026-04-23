@@ -14,8 +14,8 @@ const io = new Server(server, {
     maxDisconnectionDuration: 2 * 60 * 1000,
     skipMiddlewares: true,
   },
-  pingInterval: 5000, 
-  pingTimeout: 10000,
+  pingInterval: 10000, 
+  pingTimeout: 20000,
   allowEIO3: true
 });
 
@@ -29,13 +29,13 @@ const ADMIN_SECRET = process.env.ADMIN_SECRET || 'Azzurro97_Master';
 setInterval(() => {
   const now = Date.now();
   const diff = now - lastMasterHeartbeat;
-  if (serverSocketId && diff > 30000) {
+  if (serverSocketId && diff > 90000) {
     console.log(`⚠️ Master inattivo da ${diff}ms. Forzo reset stato.`);
     serverSocketId = null;
     masterSocket = null;
     io.emit('server_status', { online: false });
   }
-}, 10000);
+}, 15000);
 
 io.on('connection', (socket) => {
   console.log(`⚡ Nuova connessione [${socket.id}]`);
@@ -105,14 +105,14 @@ io.on('connection', (socket) => {
       const disconnectedId = socket.id;
       
       setTimeout(() => {
-        // Se dopo 60s il master non si è ricollegato (quindi serverSocketId è ancora quello vecchio o nullo)
+        // Se dopo 90s il master non si è ricollegato (quindi serverSocketId è ancora quello vecchio o nullo)
         if (serverSocketId === disconnectedId) {
-           console.log('💀 Master non recuperato. Dichiaro OFFLINE.');
+           console.log('💀 Master non recuperato dopo 90s. Dichiaro OFFLINE.');
            serverSocketId = null;
            masterSocket = null;
            io.emit('server_status', { online: false });
         }
-      }, 60000);
+      }, 90000);
     }
   });
 });

@@ -61,9 +61,14 @@ io.on('connection', (socket) => {
 
   socket.on('master_heartbeat', () => {
     // Se il socket che manda l'heartbeat è il master, aggiorna il timestamp
-    if (socket.id === serverSocketId || socket === masterSocket) {
+    // Se il serverSocketId è andato perduto (es. riavvio broker) ma il socket è quello del master
+    if (!serverSocketId && socket === masterSocket) {
+      serverSocketId = socket.id;
+      console.log('🔄 Master recuperato tramite heartbeat.');
+    }
+    
+    if (socket.id === serverSocketId) {
       lastMasterHeartbeat = Date.now();
-      // console.log('💓 Heartbeat ricevuto dal Master');
     }
   });
 

@@ -82,11 +82,13 @@ io.on('connection', (socket) => {
       return callback({ success: true, status: 'GRACE_PERIOD', timestamp: Date.now() });
     }
 
-    if (!serverSocketId || (masterSocket && !masterSocket.connected)) {
-      console.log('❌ Richiesta client fallita: Master non raggiungibile.');
-      return callback({ error: 'OFFLINE', message: 'Il server Master è in fase di riconnessione.' });
+    if (!serverSocketId) {
+      console.log('❌ Richiesta client fallita: Master totalmente offline.');
+      return callback({ success: false, error: 'OFFLINE', message: 'Il server Master è scollegato.' });
     }
     
+    // Se il socket c'è ma è temporaneamente disconnesso, non rifiutiamo subito, 
+    // lasciamo che la richiesta vada in timeout o venga processata al rientro.
     const timeout = setTimeout(() => {
       console.log(`⏰ Timeout richiesta client per azione: ${data.action}`);
       callback({ success: false, error: 'TIMEOUT', message: 'Il telefono non ha risposto entro 60 secondi.' });

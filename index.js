@@ -96,8 +96,8 @@ io.on('connection', (socket) => {
     // lasciamo che la richiesta vada in timeout o venga processata al rientro.
     const timeout = setTimeout(() => {
       console.log(`⏰ Timeout richiesta client per azione: ${data.action}`);
-      callback({ success: false, error: 'TIMEOUT', message: 'Il telefono non ha risposto entro 60 secondi.' });
-    }, 60000);
+      callback({ success: false, error: 'TIMEOUT', message: 'Il telefono non ha risposto entro 20 secondi.' });
+    }, 20000);
 
     io.to(serverSocketId).emit('process_request', data, (response) => {
       clearTimeout(timeout);

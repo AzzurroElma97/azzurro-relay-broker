@@ -92,14 +92,15 @@ io.on('connection', (socket) => {
       return callback({ success: false, error: 'OFFLINE', message: 'Il server Master è scollegato.' });
     }
     
-    // Se il socket c'è ma è temporaneamente disconnesso, non rifiutiamo subito, 
-    // lasciamo che la richiesta vada in timeout o venga processata al rientro.
-    const timeout = setTimeout(() => {
-      console.log(`⏰ Timeout richiesta client per azione: ${data.action}`);
-      callback({ success: false, error: 'TIMEOUT', message: 'Il telefono non ha risposto entro 20 secondi.' });
-    }, 20000);
+    const clientIp = socket.handshake.headers['x-forwarded-for'] || socket.handshake.address || 'Unknown';
+    const requestData = { ...data, clientIp };
 
-    io.to(serverSocketId).emit('process_request', data, (response) => {
+    const timeout = setTimeout(() => {
+      console.log(`⏰ Timeout richiesta client per azione: ${data.action} da ${clientIp}`);
+      callback({ success: false, error: 'TIMEOUT', message: 'Il telefono non ha risposto entro 10 secondi.' });
+    }, 15000);
+
+    io.to(serverSocketId).emit('process_request', requestData, (response) => {
       clearTimeout(timeout);
       callback(response);
     });

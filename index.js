@@ -93,11 +93,26 @@ io.on('connection', (socket) => {
     }
     
     const clientIp = socket.handshake.headers['x-forwarded-for'] || socket.handshake.address || 'Unknown';
-    const requestData = { ...data, clientIp };
+    const requestData = { ...data, clientIp, clientSocketId: socket.id };
 
-    io.to(serverSocketId).emit('process_request', requestData);
-    // Rispondiamo subito al client che la richiesta è stata passata al Master
-    callback({ success: true, message: 'Richiesta consegnata al Master. In attesa di autorizzazione.' });
+    if (data.action === 'REQUEST_AUTO_LOGIN') {
+      io.to(serverSocketId).emit('process_request', requestData);
+      return callback({ success: true, message: 'Richiesta consegnata al Master. In attesa di autorizzazione manuale.' });
+    }
+
+    // Per tutte le altre azioni (LOGIN_USER, GET_DATA, etc) usiamo la callback diretta per velocità
+    const timeout = setTimeout(() => {
+      if (typeof callback === 'function') {
+        callback({ success: false, error: 'TIMEOUT', message: 'Il Master non ha risposto in tempo.' });
+      }
+    }, 30000);
+
+    io.to(serverSocketId).emit('process_request', requestData, (response) => {
+      clearTimeout(timeout);
+      if (typeof callback === 'function') {
+        callback(response);
+      }
+    });
   });
 
   socket.on('master_response', (data) => {

@@ -95,15 +95,20 @@ io.on('connection', (socket) => {
     const clientIp = socket.handshake.headers['x-forwarded-for'] || socket.handshake.address || 'Unknown';
     const requestData = { ...data, clientIp };
 
-    const timeout = setTimeout(() => {
-      console.log(`⏰ Timeout richiesta client per azione: ${data.action} da ${clientIp}`);
-      callback({ success: false, error: 'TIMEOUT', message: 'Il telefono non ha risposto entro 10 secondi.' });
-    }, 15000);
+    io.to(serverSocketId).emit('process_request', requestData);
+    // Rispondiamo subito al client che la richiesta è stata passata al Master
+    callback({ success: true, message: 'Richiesta consegnata al Master. In attesa di autorizzazione.' });
+  });
 
-    io.to(serverSocketId).emit('process_request', requestData, (response) => {
-      clearTimeout(timeout);
-      callback(response);
-    });
+  socket.on('master_response', (data) => {
+    if (socket.id === serverSocketId || socket === masterSocket) {
+      console.log(`📩 Risposta diretta dal Master per azione: ${data.action}`);
+      if (data.targetSocketId) {
+        io.to(data.targetSocketId).emit('master_direct_response', data);
+      } else {
+        io.emit('master_broadcast_response', data);
+      }
+    }
   });
 
   socket.on('broadcast_to_web', (data) => {

@@ -84,12 +84,18 @@ io.on('connection', (socket) => {
   socket.on('client_request', (data, callback) => {
     // Se è un PING di controllo, rispondiamo OK se il Master è nel periodo di grazia (serverSocketId presente)
     if (data.action === 'PING' && serverSocketId) {
-      return callback({ success: true, status: 'GRACE_PERIOD', timestamp: Date.now() });
+      if (typeof callback === 'function') {
+        return callback({ success: true, status: 'GRACE_PERIOD', timestamp: Date.now() });
+      }
+      return;
     }
 
     if (!serverSocketId) {
       console.log('❌ Richiesta client fallita: Master totalmente offline.');
-      return callback({ success: false, error: 'OFFLINE', message: 'Il server Master è scollegato.' });
+      if (typeof callback === 'function') {
+        return callback({ success: false, error: 'OFFLINE', message: 'Il server Master è scollegato.' });
+      }
+      return;
     }
     
     const clientIp = socket.handshake.headers['x-forwarded-for'] || socket.handshake.address || 'Unknown';
@@ -97,7 +103,10 @@ io.on('connection', (socket) => {
 
     if (data.action === 'REQUEST_AUTO_LOGIN') {
       io.to(serverSocketId).emit('process_request', requestData);
-      return callback({ success: true, message: 'Richiesta consegnata al Master. In attesa di autorizzazione manuale.' });
+      if (typeof callback === 'function') {
+        return callback({ success: true, message: 'Richiesta consegnata al Master. In attesa di autorizzazione manuale.' });
+      }
+      return;
     }
 
     // Per tutte le altre azioni (LOGIN_USER, GET_DATA, etc) usiamo la callback diretta per velocità
